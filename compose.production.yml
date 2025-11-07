@@ -1,0 +1,11 @@
+# 🖥️
+cat > compose.production.yml << 'EOF'
+services:
+  web:
+    image: ghcr.io/OWNER/flask-cicd-demo:latest
+    restart: unless-stopped
+    ports:
+      - "80:8000"
+    environment:
+      FLASK_ENV: production
+EOF

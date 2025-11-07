@@ -1,0 +1,70 @@
+# 🖥️
+mkdir -p .github/workflows
+cat > .github/workflows/ci-cd.yml << 'EOF'
+name: CI/CD
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+
+    env:
+      REGISTRY: ghcr.io
+      IMAGE_NAME: ${{ github.repository }}   # ghcr.io/OWNER/REPO
+      REMOTE_HOST: ${{ secrets.SSH_HOST }}
+      REMOTE_USER: ${{ secrets.SSH_USER }}
+      REMOTE_PATH: ${{ secrets.REMOTE_PATH }} # e.g. /home/ubuntu/flask-cicd-demo
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+      - name: Install SSH key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Add host to known_hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "$REMOTE_HOST" >> ~/.ssh/known_hosts
+
+      - name: Copy compose file (first time or when changed)
+        run: |
+          rsync -avz compose.production.yml $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/
+
+      - name: Pull new image & restart container
+        run: |
+          ssh $REMOTE_USER@$REMOTE_HOST \
+            "docker compose -f $REMOTE_PATH/compose.production.yml pull && \
+             docker compose -f $REMOTE_PATH/compose.production.yml up -d && \
+             docker image prune -f"
+EOF
